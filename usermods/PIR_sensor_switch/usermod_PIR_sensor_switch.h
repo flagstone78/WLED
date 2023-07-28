@@ -33,7 +33,8 @@ class PIRsensorSwitch : public Usermod
 {
 public:
   // constructor
-  PIRsensorSwitch() {}
+  const char _name[17];
+  PIRsensorSwitch(const char instanceID):_name{'P','I','R','s','e','n','s','o','r','S','w','i','t','c','h',instanceID,0}{}
   // destructor
   ~PIRsensorSwitch() {}
 
@@ -72,7 +73,7 @@ private:
   bool HomeAssistantDiscovery = false;        // is HA discovery turned on
 
   // strings to reduce flash memory usage (used more than twice)
-  static const char _name[];
+  //static const char _name[];
   static const char _switchOffDelay[];
   static const char _enabled[];
   static const char _onPreset[];
@@ -185,7 +186,7 @@ public:
 };
 
 // strings to reduce flash memory usage (used more than twice)
-const char PIRsensorSwitch::_name[]           PROGMEM = "PIRsensorSwitch";
+//const char PIRsensorSwitch::_name[]           PROGMEM = "PIRsensorSwitch";
 const char PIRsensorSwitch::_enabled[]        PROGMEM = "PIRenabled";
 const char PIRsensorSwitch::_switchOffDelay[] PROGMEM = "PIRoffSec";
 const char PIRsensorSwitch::_onPreset[]       PROGMEM = "on-preset";
@@ -356,7 +357,7 @@ void PIRsensorSwitch::setup()
     // pin retrieved from cfg.json (readFromConfig()) prior to running setup()
     if (PIRsensorPin >= 0 && pinManager.allocatePin(PIRsensorPin, false, PinOwner::UM_PIR)) {
       // PIR Sensor mode INPUT_PULLUP
-      pinMode(PIRsensorPin, INPUT_PULLUP);
+      pinMode(PIRsensorPin, INPUT_PULLDOWN);
       sensorPinState = digitalRead(PIRsensorPin);
     } else {
       if (PIRsensorPin >= 0) {

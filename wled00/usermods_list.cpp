@@ -235,7 +235,8 @@ void registerUsermods()
   #endif
 
   #ifdef USERMOD_PIRSWITCH
-  usermods.add(new PIRsensorSwitch());
+  usermods.add(new PIRsensorSwitch('0'));
+  usermods.add(new PIRsensorSwitch('1'));
   #endif
 
   #ifdef USERMOD_MODE_SORT
