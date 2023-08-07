@@ -22,7 +22,7 @@
 
 // You are required to disable over-the-air updates:
 #define WLED_DISABLE_OTA         // saves 14kb
-//#define USERMOD_PIRSWITCH
+#define USERMOD_LD2410
 #define WLED_DISABLE_LOXONE
 #define WLED_DISABLE_WEBSOCKETS
 #define WLED_DISABLE_MQTT
