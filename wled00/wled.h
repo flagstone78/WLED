@@ -21,12 +21,16 @@
 // Alternatively, with platformio pass your chosen flags to your custom build target in platformio_override.ini
 
 // You are required to disable over-the-air updates:
-//#define WLED_DISABLE_OTA         // saves 14kb
-
+#define WLED_DISABLE_OTA         // saves 14kb
+//#define USERMOD_PIRSWITCH
+#define WLED_DISABLE_LOXONE
+#define WLED_DISABLE_WEBSOCKETS
+#define WLED_DISABLE_MQTT
 // You can choose some of these features to disable:
-//#define WLED_DISABLE_ALEXA       // saves 11kb
-//#define WLED_DISABLE_HUESYNC     // saves 4kb
-//#define WLED_DISABLE_INFRARED    // saves 12kb, there is no pin left for this on ESP8266-01
+#define WLED_DISABLE_ALEXA       // saves 11kb
+#define WLED_DISABLE_HUESYNC     // saves 4kb
+#define WLED_DISABLE_INFRARED    // saves 12kb, there is no pin left for this on ESP8266-01
+#define WLED_DISABLE_BLYNK       // saves 6kb
 #ifndef WLED_DISABLE_MQTT
   #define WLED_ENABLE_MQTT         // saves 12kb
 #endif
@@ -44,12 +48,12 @@
   #define WLED_ENABLE_WEBSOCKETS
 #endif
 
-//#define WLED_DISABLE_ESPNOW      // Removes dependence on esp now 
+#define WLED_DISABLE_ESPNOW      // Removes dependence on esp now 
 
 #define WLED_ENABLE_FS_EDITOR      // enable /edit page for editing FS content. Will also be disabled with OTA lock
 
 // to toggle usb serial debug (un)comment the following line
-//#define WLED_DEBUG
+#define WLED_DEBUG
 
 // filesystem specific debugging
 //#define WLED_DEBUG_FS
