@@ -147,6 +147,9 @@ class LD2410 : public Usermod {
     bool testBool2 = true;
     bool testBool3 = true;
     bool testBool4 = true;
+
+    uint16_t fullonDist = 30; //cm
+    uint16_t fulloffDist = 400; //cm
     
     // These config variables have defaults set inside readFromConfig()
     /*int testInt;
@@ -191,7 +194,7 @@ class LD2410 : public Usermod {
   public:
     uint8_t getSer(){
       uint8_t dat = _serial.read();
-      DEBUG_PRINTF("Serial Data: %d \r\n", dat);
+      //DEBUG_PRINTF("Serial Data: %d \r\n", dat);
       return dat;
     }
 
@@ -214,8 +217,8 @@ class LD2410 : public Usermod {
     bool getDataFrame(uint16_t dataLength){
         if(_serial.available() < dataLength) return false;
         if(_serial.readBytes(_buf, dataLength) != dataLength) return false;
-        DEBUG_PRINTF("data length: %d \r\n", dataLength);
-        printarr(_buf, dataLength);
+        //DEBUG_PRINTF("data length: %d \r\n", dataLength);
+        //printarr(_buf, dataLength);
         uint8_t _bufi = 0; //reset buffer index
 
         data.dataType = (LD2410DataType)_buf[_bufi++];
@@ -262,8 +265,8 @@ class LD2410 : public Usermod {
     bool getCMDresponse(uint16_t dataLength){
         if(_serial.available() < dataLength) return false;
         if(_serial.readBytes(_buf, dataLength) != dataLength) return false;
-        DEBUG_PRINTF("data length: %d \r\n", dataLength);
-        printarr(_buf, dataLength);
+        //DEBUG_PRINTF("data length: %d \r\n", dataLength);
+        //printarr(_buf, dataLength);
 
         uint8_t _bufi = 0; //reset buffer index
         LD2410Commands command = (LD2410Commands)_buf[_bufi++]; //command byte
@@ -357,7 +360,7 @@ class LD2410 : public Usermod {
 
     void updateState(){
         if(_serial.available() > 0){
-          DEBUG_PRINTF("State: %d \r\n",state);
+        //DEBUG_PRINTF("State: %d \r\n",state);
         switch(state){ //reading sensor configuration states
             case(ST_IDLE): {uint8_t data = getSer(); state = (data == 0xFD) ? ST_CMD1 : (data == 0xF4) ? ST_DATA1 : ST_IDLE; break;}
             case(ST_CMD1): state = (getSer() == 0xFC) ? ST_CMD2      : ST_IDLE; break;
@@ -379,7 +382,21 @@ class LD2410 : public Usermod {
             case(ST_DATA5): state = (getSer() == 0xF7) ? ST_DATA6   : ST_IDLE; break;
             case(ST_DATA6): state = (getSer() == 0xF6) ? ST_DATA7   : ST_IDLE; break;
             case(ST_DATA7): state = (getSer() == 0xF5) ? ST_ENDDATAFRAME  : ST_IDLE; break;
-            case(ST_ENDDATAFRAME): state = ST_IDLE; DEBUG_PRINTF("sense: %03u, %03u, %03u, %03u \r\n", bri, data.movementDistance,data.stationaryDistance, data.detectionDistance); break;
+            case(ST_ENDDATAFRAME): 
+              state = ST_IDLE; 
+              DEBUG_PRINTF("sense: %03u, %03u, %03u, %03u \r\n", bri, data.movementDistance,data.stationaryDistance, data.detectionDistance);
+              //printarr(data.movementGateEnergies,MAX_GATES);
+              if(testBool1){
+                uint16_t calcbri = data.movementDistance;
+                //uint16_t fullonDist = 30;
+                //uint16_t fulloffDist = 300;
+                if(calcbri < fullonDist) calcbri = fullonDist;
+                if(calcbri > fulloffDist) calcbri = fulloffDist;
+                calcbri = 255-(255*(calcbri-fullonDist)/(fulloffDist-fullonDist));
+                bri = calcbri;
+                stateUpdated(CALL_MODE_DIRECT_CHANGE);
+              }
+              break;
             default: state = ST_IDLE; break;
         }
         }
@@ -396,7 +413,7 @@ class LD2410 : public Usermod {
     }
 
     bool checkComms(){
-      DEBUG_PRINTF("COM state: %d \r\n", comState);
+      //DEBUG_PRINTF("COM state: %d \r\n", comState);
       bool comReady = false;
       switch (comState){
       case COM_INIT: {
@@ -748,6 +765,8 @@ class LD2410 : public Usermod {
       top["test2"] = testBool2;
       top["test3"] = testBool3;
       top["test4"] = testBool4;
+      top["fullOffDistance"] = fulloffDist;
+      top["fullOnDistance"] = fullonDist;
     }
 
 
@@ -791,6 +810,12 @@ class LD2410 : public Usermod {
       configComplete &= getJsonValue(top["test2"], testBool2);  
       configComplete &= getJsonValue(top["test3"], testBool3);  
       configComplete &= getJsonValue(top["test4"], testBool4);
+      configComplete &= getJsonValue(top["fullOffDistance"], fulloffDist, 400);
+      configComplete &= getJsonValue(top["fullOnDistance"], fullonDist, 30);
+
+      fullonDist = (fullonDist < 0) ? 0 : (fullonDist > 550) ? 550 : fullonDist; 
+      fulloffDist = (fulloffDist <= fullonDist) ? fullonDist+1 : (fulloffDist > 600) ? 600 : fulloffDist; 
+
 
       if(firstConfig){
         baudold = baud; //ignore default value on startup
