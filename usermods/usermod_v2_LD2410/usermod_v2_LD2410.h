@@ -135,18 +135,21 @@ class LD2410 : public Usermod {
     String testString = "Forty-Two";*/
     int8_t RXpin = -1; //pin number of UART RX pin. Managed by pinManager
     int8_t TXpin = -1; //pin number of UART TX pin. Managed by pinManager
-    HardwareSerial _serial = Serial0; //Serial interface of the LD2410
+    HardwareSerial _serial = Serial1; //Serial interface of the LD2410
     uint8_t _buf[64] = {0}; //temporary storage for serial messages
     LD2410EngFormat data; // current data from the LD2410
     uint8_t baud = 7; //range 1 to 8. baud rate value of the LD2410
     uint8_t baudold = baud; 
-    unsigned int baudTable[8] = {9600u,19200u,38400u,57600u,115200u,230400u,256000u,460800u}; //allowable baud rates for ld2410
+    #define NUM_BAUD_VALUES 8u
+    unsigned int baudTable[NUM_BAUD_VALUES] = {9600u,19200u,38400u,57600u,115200u,230400u,256000u,460800u}; //allowable baud rates for ld2410
     bool pinsReady = false; // whether Serial pins are allocated by pin manager
 
     bool testBool1 = true;
     bool testBool2 = true;
     bool testBool3 = true;
     bool testBool4 = true;
+    bool testBool5 = false;
+    bool testBool6 = false;
 
     uint16_t fullonDist = 30; //cm
     uint16_t fulloffDist = 400; //cm
@@ -360,7 +363,7 @@ class LD2410 : public Usermod {
 
     void updateState(){
         if(_serial.available() > 0){
-        //DEBUG_PRINTF("State: %d \r\n",state);
+        if(testBool6){DEBUG_PRINTF("State: %d \r\n",state);}
         switch(state){ //reading sensor configuration states
             case(ST_IDLE): {uint8_t data = getSer(); state = (data == 0xFD) ? ST_CMD1 : (data == 0xF4) ? ST_DATA1 : ST_IDLE; break;}
             case(ST_CMD1): state = (getSer() == 0xFC) ? ST_CMD2      : ST_IDLE; break;
@@ -384,8 +387,8 @@ class LD2410 : public Usermod {
             case(ST_DATA7): state = (getSer() == 0xF5) ? ST_ENDDATAFRAME  : ST_IDLE; break;
             case(ST_ENDDATAFRAME): 
               state = ST_IDLE; 
-              DEBUG_PRINTF("sense: %03u, %03u, %03u, %03u \r\n", bri, data.movementDistance,data.stationaryDistance, data.detectionDistance);
-              //printarr(data.movementGateEnergies,MAX_GATES);
+              if(testBool2) {DEBUG_PRINTF("sense: %03u, %03u, %03u, %03u \r\n", bri, data.movementDistance,data.stationaryDistance, data.detectionDistance);}
+              if(testBool3) {printarr(data.movementGateEnergies,MAX_GATES);}
               if(testBool1){
                 uint16_t calcbri = data.movementDistance;
                 //uint16_t fullonDist = 30;
@@ -402,32 +405,34 @@ class LD2410 : public Usermod {
         }
     }
     unsigned long comTime = 0;
-    unsigned long comTimeoutms = 1000;
+    unsigned long comTimeoutms = 3000;
     void setBaud(uint8_t _baud){
-      _baud = (_baud<1)? 1 : (baud>8) ? 8 : _baud;
-      _serial.end(); //clear buffer
-      state = ST_IDLE; //reset 
-      _serial.begin(baudTable[_baud-1],SERIAL_8N1,RXpin,TXpin); //connect old baud rate
-      _serial.setTimeout(0); //no wait for read
+      _baud = (_baud<1)? 1 : (baud>NUM_BAUD_VALUES) ? 8 : _baud; //1 indexed
+      _serial.end(); //clear buffer //watchdog wdt crashes on esp32-cam but not esp32s2 mini
+      state = ST_IDLE; //reset data frame state machine
+      delay(10);
+      _serial.begin(baudTable[_baud-1],SERIAL_8N1,RXpin,TXpin); 
+      //_serial.setTimeout(0); //no wait for read
+      
       _serial.write(CMD_ENABLE_CONFIG,sizeof(CMD_ENABLE_CONFIG)); //send config mode command
     }
 
     bool checkComms(){
-      //DEBUG_PRINTF("COM state: %d \r\n", comState);
+      if(testBool5){DEBUG_PRINTF("COM state: %d %d \r\n", comState, baudold);}
       bool comReady = false;
       switch (comState){
       case COM_INIT: {
         recievedResponse = false; 
         baudSet = false;
         comTime = millis(); 
-        setBaud(baudold); 
+        setBaud(baudold);  //check previous baud rate
         comState = COM_WAITOLD; 
         break; //end serial and empty buffer
       }
       case COM_WAITOLD:{
         if(recievedResponse){ comState = COM_SETBAUD;}
         else if(millis() - comTime > comTimeoutms){
-          baudold = baud; 
+          baudold = baud;  //check baud rate being set to
           comTime = millis(); 
           setBaud(baudold);
           comState = COM_WAITNEW;
@@ -437,7 +442,7 @@ class LD2410 : public Usermod {
       case COM_WAITNEW:{
         if(recievedResponse){ comState = COM_SETBAUD;}
         else if(millis() - comTime > comTimeoutms){
-          baudold = 1;
+          baudold = 1; //check first baud and increment
           comTime = millis(); 
           setBaud(baudold);
           comState = COM_FINDBAUD;
@@ -596,58 +601,22 @@ class LD2410 : public Usermod {
       // NOTE: on very long strips strip.isUpdating() may always return true so update accordingly
       if (!enabled || strip.isUpdating()) return;
 
-      if (millis() - lastTime > 100) {
-        //Serial.println("I'm alive!");
-        //calcbri+=10;
+      if (millis() - lastTime > 100) { //limit to 10 sensor updates per second
         lastTime = millis();
-
-        unsigned int dataNum = _serial.available();
-        if(dataNum > 100){
-          dataNum = 100;
-          DEBUG_PRINTLN("Too much serial data");
-        }
-        unsigned int i = 0;
-        for(i = 0; i < dataNum; ++i){
-          updateState();
-        }
-        checkComms();
-      }
-
-      
-
-
-      // do your magic here
-      /*if(testBool3){
-      while(_serial.available() >= 45){
-        if(testBool1){
-        _serial.readBytes(_buf,45);
-        }
-
-        //printarr(_buf,45);
-        if(data->header == 0xF1F2F3F4u){ //if data valid
-          //printdata();
-          if(!(data->targetState & 0x01)){data->movementDistance = 255;}
-          if(!(data->targetState & 0x02)){data->stationaryDistance = 0;}
-          DEBUG_PRINTF("sense: %03u, %03u, %03u, %03u \n", bri, data->movementDistance,data->stationaryDistance, data->detectionDistance);
-          
-          calcbri = data->movementDistance;
-          if(calcbri >= 30){calcbri -= 30;}
-          calcbri *= 2;
-          if(calcbri >= 255){calcbri = 255;}
-          calcbri = 255-calcbri;
-
-          if(testBool2){
-          if(bri != calcbri){
-            if(testBool4){
-            bri = calcbri;
-            } 
-            stateUpdated(CALL_MODE_DIRECT_CHANGE);
+        if(testBool4){
+        
+          unsigned int dataNum = _serial.available();
+          if(dataNum > 1000){
+            dataNum = 1000;
+            DEBUG_PRINTLN("Too much serial data");
           }
+          unsigned int i = 0;
+          for(i = 0; i < dataNum; ++i){
+            updateState(); //read and process serial data
           }
-
-        } else {_serial.read();}  //shift by one and try on next
+          checkComms(); //must run after update state
+        }
       }
-      }*/
     }
 
 
@@ -765,6 +734,8 @@ class LD2410 : public Usermod {
       top["test2"] = testBool2;
       top["test3"] = testBool3;
       top["test4"] = testBool4;
+      top["ComState"] = testBool5;
+      top["DataState"] = testBool6;
       top["fullOffDistance"] = fulloffDist;
       top["fullOnDistance"] = fullonDist;
     }
@@ -810,6 +781,8 @@ class LD2410 : public Usermod {
       configComplete &= getJsonValue(top["test2"], testBool2);  
       configComplete &= getJsonValue(top["test3"], testBool3);  
       configComplete &= getJsonValue(top["test4"], testBool4);
+      configComplete &= getJsonValue(top["ComState"], testBool5);
+      configComplete &= getJsonValue(top["DataState"], testBool6);
       configComplete &= getJsonValue(top["fullOffDistance"], fulloffDist, 400);
       configComplete &= getJsonValue(top["fullOnDistance"], fullonDist, 30);
 
