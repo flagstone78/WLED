@@ -20,6 +20,7 @@ bool deserializeSegment(JsonObject elem, byte it, byte presetId)
   byte id = elem["id"] | it;
   if (id >= strip.getMaxSegments()) return false;
 
+  bool newSeg = false;
   int stop = elem["stop"] | -1;
 
   // append segment
@@ -27,10 +28,14 @@ bool deserializeSegment(JsonObject elem, byte it, byte presetId)
     if (stop <= 0) return false; // ignore empty/inactive segments
     strip.appendSegment(Segment(0, strip.getLengthTotal()));
     id = strip.getSegmentsNum()-1; // segments are added at the end of list
+    newSeg = true;
   }
 
+  //DEBUG_PRINTLN("-- JSON deserialize segment.");
   Segment& seg = strip.getSegment(id);
+  //DEBUG_PRINTF("--  Original segment: %p\n", &seg);
   Segment prev = seg; //make a backup so we can tell if something changed
+  //DEBUG_PRINTF("--  Duplicate segment: %p\n", &prev);
 
   uint16_t start = elem["start"] | seg.start;
   if (stop < 0) {
@@ -115,8 +120,12 @@ bool deserializeSegment(JsonObject elem, byte it, byte presetId)
   // do not call seg.setUp() here, as it may cause a crash due to concurrent access if the segment is currently drawing effects
   // WS2812FX handles queueing of the change
   strip.setSegment(id, start, stop, grp, spc, of, startY, stopY);
+  if (newSeg) seg.refreshLightCapabilities(); // fix for #3403
 
-  if (seg.reset && seg.stop == 0) return true; // segment was deleted & is marked for reset, no need to change anything else
+  if (seg.reset && seg.stop == 0) {
+    if (id == strip.getMainSegmentId()) strip.setMainSegmentId(0); // fix for #3403
+    return true; // segment was deleted & is marked for reset, no need to change anything else
+  }
 
   byte segbri = seg.opacity;
   if (getVal(elem["bri"], &segbri)) {
@@ -222,7 +231,7 @@ bool deserializeSegment(JsonObject elem, byte it, byte presetId)
   getVal(elem["c1"], &seg.custom1);
   getVal(elem["c2"], &seg.custom2);
   uint8_t cust3 = seg.custom3;
-  getVal(elem["c3"], &cust3); // we can't pass reference to bifield
+  getVal(elem["c3"], &cust3); // we can't pass reference to bitfield
   seg.custom3 = constrain(cust3, 0, 31);
 
   seg.check1 = elem["o1"] | seg.check1;
@@ -235,8 +244,9 @@ bool deserializeSegment(JsonObject elem, byte it, byte presetId)
     seg.map1D2D = M12_Pixels; // no mapping
 
     // set brightness immediately and disable transition
-    transitionDelayTemp = 0;
     jsonTransitionOnce = true;
+    seg.stopTransition();
+    strip.setTransition(0);
     strip.setBrightness(scaledBri(bri), true);
 
     // freeze and init to black
@@ -318,23 +328,18 @@ bool deserializeState(JsonObject root, byte callMode, byte presetId)
   int tr = -1;
   if (!presetId || currentPlaylist < 0) { //do not apply transition time from preset if playlist active, as it would override playlist transition times
     tr = root[F("transition")] | -1;
-    if (tr >= 0)
-    {
-      transitionDelay = tr;
-      transitionDelay *= 100;
-      transitionDelayTemp = transitionDelay;
+    if (tr >= 0) {
+      transitionDelay = tr * 100;
+      if (fadeTransition) strip.setTransition(transitionDelay);
     }
   }
 
   // temporary transition (applies only once)
   tr = root[F("tt")] | -1;
-  if (tr >= 0)
-  {
-    transitionDelayTemp = tr;
-    transitionDelayTemp *= 100;
+  if (tr >= 0) {
     jsonTransitionOnce = true;
+    if (fadeTransition) strip.setTransition(tr * 100);
   }
-  strip.setTransition(transitionDelayTemp); // required here for color transitions to have correct duration
 
   tr = root[F("tb")] | -1;
   if (tr >= 0) strip.timebase = ((uint32_t)tr) - millis();
@@ -347,7 +352,9 @@ bool deserializeState(JsonObject root, byte callMode, byte presetId)
 
   JsonObject udpn      = root["udpn"];
   notifyDirect         = udpn["send"] | notifyDirect;
+  syncGroups           = udpn["sgrp"] | syncGroups;
   receiveNotifications = udpn["recv"] | receiveNotifications;
+  receiveGroups        = udpn["rgrp"] | receiveGroups;
   if ((bool)udpn[F("nn")]) callMode = CALL_MODE_NO_NOTIFY; //send no notification just for this request
 
   unsigned long timein = root["time"] | UINT32_MAX; //backup time source if NTP not synced
@@ -369,8 +376,8 @@ bool deserializeState(JsonObject root, byte callMode, byte presetId)
 
   if (root.containsKey("live")) {
     if (root["live"].as<bool>()) {
-      transitionDelayTemp = 0;
       jsonTransitionOnce = true;
+      strip.setTransition(0);
       realtimeLock(65000);
     } else {
       exitRealtime();
@@ -490,7 +497,8 @@ void serializeSegment(JsonObject& root, Segment& seg, byte id, bool forPreset, b
   root["cct"]    = seg.cct;
   root[F("set")] = seg.set;
 
-  if (segmentBounds && seg.name != nullptr) root["n"] = reinterpret_cast<const char *>(seg.name); //not good practice, but decreases required JSON buffer
+  if (seg.name != nullptr) root["n"] = reinterpret_cast<const char *>(seg.name); //not good practice, but decreases required JSON buffer
+  else if (forPreset) root["n"] = "";
 
   // to conserve RAM we will serialize the col array manually
   // this will reduce RAM footprint from ~300 bytes to 84 bytes per segment
@@ -564,6 +572,8 @@ void serializeState(JsonObject root, bool forPreset, bool includeBri, bool segme
     JsonObject udpn = root.createNestedObject("udpn");
     udpn["send"] = notifyDirect;
     udpn["recv"] = receiveNotifications;
+    udpn["sgrp"] = syncGroups;
+    udpn["rgrp"] = receiveGroups;
 
     root[F("lor")] = realtimeOverride;
   }
@@ -735,6 +745,10 @@ void serializeInfo(JsonObject root)
   #endif
   root[F("uptime")] = millis()/1000 + rolloverMillis*4294967;
 
+  char time[32];
+  getTimeString(time);
+  root[F("time")] = time;
+
   usermods.addToJsonInfo(root);
 
   uint16_t os = 0;
@@ -868,7 +882,7 @@ void serializePalettes(JsonObject root, int page)
         curPalette.add("c2");
         curPalette.add("c1");
         break;
-      case 5: //primary + secondary (+tert if not off), more distinct
+      case 5: //primary + secondary (+tertiary if not off), more distinct
         curPalette.add("c1");
         curPalette.add("c1");
         curPalette.add("c1");
@@ -971,9 +985,10 @@ void serializeNodes(JsonObject root)
 // deserializes mode data string into JsonArray
 void serializeModeData(JsonArray fxdata)
 {
-  char lineBuffer[128];
+  char lineBuffer[256];
   for (size_t i = 0; i < strip.getModeCount(); i++) {
-    strncpy_P(lineBuffer, strip.getModeData(i), 127);
+    strncpy_P(lineBuffer, strip.getModeData(i), sizeof(lineBuffer)/sizeof(char)-1);
+    lineBuffer[sizeof(lineBuffer)/sizeof(char)-1] = '\0'; // terminate string
     if (lineBuffer[0] != 0) {
       char* dataPtr = strchr(lineBuffer,'@');
       if (dataPtr) fxdata.add(dataPtr+1);
@@ -984,10 +999,12 @@ void serializeModeData(JsonArray fxdata)
 
 // deserializes mode names string into JsonArray
 // also removes effect data extensions (@...) from deserialised names
-void serializeModeNames(JsonArray arr) {
-  char lineBuffer[128];
+void serializeModeNames(JsonArray arr)
+{
+  char lineBuffer[256];
   for (size_t i = 0; i < strip.getModeCount(); i++) {
-    strncpy_P(lineBuffer, strip.getModeData(i), 127);
+    strncpy_P(lineBuffer, strip.getModeData(i), sizeof(lineBuffer)/sizeof(char)-1);
+    lineBuffer[sizeof(lineBuffer)/sizeof(char)-1] = '\0'; // terminate string
     if (lineBuffer[0] != 0) {
       char* dataPtr = strchr(lineBuffer,'@');
       if (dataPtr) *dataPtr = 0; // terminate mode data after name
@@ -995,6 +1012,17 @@ void serializeModeNames(JsonArray arr) {
     }
   }
 }
+
+
+// Global buffer locking response helper class
+class GlobalBufferAsyncJsonResponse: public JSONBufferGuard, public AsyncJsonResponse {
+  public:
+  inline GlobalBufferAsyncJsonResponse(bool isArray) : JSONBufferGuard(17), AsyncJsonResponse(&doc, isArray) {};
+  virtual ~GlobalBufferAsyncJsonResponse() {};
+
+  // Other members are inherited
+};
+
 
 void serveJson(AsyncWebServerRequest* request)
 {
@@ -1026,11 +1054,12 @@ void serveJson(AsyncWebServerRequest* request)
     return;
   }
 
-  if (!requestJSONBufferLock(17)) {
+  GlobalBufferAsyncJsonResponse *response = new GlobalBufferAsyncJsonResponse(subJson==JSON_PATH_FXDATA || subJson==JSON_PATH_EFFECTS); // will clear and convert JsonDocument into JsonArray if necessary
+  if (!response->owns_lock()) {
     request->send(503, "application/json", F("{\"error\":3}"));
+    delete response;
     return;
   }
-  AsyncJsonResponse *response = new AsyncJsonResponse(&doc, subJson==JSON_PATH_FXDATA || subJson==JSON_PATH_EFFECTS); // will clear and convert JsonDocument into JsonArray if necessary
 
   JsonVariant lDoc = response->getRoot();
 
@@ -1073,7 +1102,6 @@ void serveJson(AsyncWebServerRequest* request)
   DEBUG_PRINT(F("JSON content length: ")); DEBUG_PRINTLN(len);
 
   request->send(response);
-  releaseJSONBufferLock();
 }
 
 #ifdef WLED_ENABLE_JSONLIVE

@@ -180,6 +180,10 @@
   #include "../usermods/boblight/boblight.h"
 #endif
 
+#ifdef USERMOD_INTERNAL_TEMPERATURE
+  #include "../usermods/Internal_Temperature_v2/usermod_internal_temperature.h"
+#endif
+
 #if defined(WLED_USE_SD_MMC) || defined(WLED_USE_SD_SPI)
 // This include of SD.h and SD_MMC.h must happen here, else they won't be
 // resolved correctly (when included in mod's header only)
@@ -196,6 +200,9 @@
 #include "../usermods/pwm_outputs/usermod_pwm_outputs.h"
 #endif
 
+#ifdef USERMOD_LDR_DUSK_DAWN
+#include "../usermods/LDR_Dusk_Dawn_v2/usermod_LDR_Dusk_Dawn_v2.h"
+#endif
 
 void registerUsermods()
 {
@@ -372,5 +379,13 @@ void registerUsermods()
 
   #ifdef USERMOD_SHT
   usermods.add(new ShtUsermod());
+  #endif
+
+  #ifdef USERMOD_INTERNAL_TEMPERATURE
+  usermods.add(new InternalTemperatureUsermod());
+  #endif
+
+  #ifdef USERMOD_LDR_DUSK_DAWN
+  usermods.add(new LDR_Dusk_Dawn_v2());
   #endif
 }
