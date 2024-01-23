@@ -410,9 +410,10 @@ class LD2410 : public Usermod {
       _baud = (_baud<1)? 1 : (baud>NUM_BAUD_VALUES) ? 8 : _baud; //1 indexed
       _serial.end(); //clear buffer //watchdog wdt crashes on esp32-cam but not esp32s2 mini
       state = ST_IDLE; //reset data frame state machine
-      delay(10);
+      //delay(2);
+      _serial.setRxBufferSize(1024);
       _serial.begin(baudTable[_baud-1],SERIAL_8N1,RXpin,TXpin); 
-      //_serial.setTimeout(0); //no wait for read
+      _serial.setTimeout(0); //no wait for read
       
       _serial.write(CMD_ENABLE_CONFIG,sizeof(CMD_ENABLE_CONFIG)); //send config mode command
     }
@@ -601,22 +602,20 @@ class LD2410 : public Usermod {
       // NOTE: on very long strips strip.isUpdating() may always return true so update accordingly
       if (!enabled || strip.isUpdating()) return;
 
-      if (millis() - lastTime > 100) { //limit to 10 sensor updates per second
-        lastTime = millis();
-        if(testBool4){
-        
-          unsigned int dataNum = _serial.available();
-          if(dataNum > 1000){
-            dataNum = 1000;
-            DEBUG_PRINTLN("Too much serial data");
-          }
-          unsigned int i = 0;
-          for(i = 0; i < dataNum; ++i){
+      //if (millis() - lastTime > 10) { //limit to 10 sensor updates per second
+      //  lastTime = millis();
+      if(testBool4){
+        uint32_t dataNum = _serial.available();
+
+        if(dataNum > 0){
+          if(dataNum > 1000){dataNum =1000; DEBUG_PRINTLN("Too much serial data");}
+          for(uint32_t i = 0; i < dataNum; ++i){
             updateState(); //read and process serial data
           }
-          checkComms(); //must run after update state
         }
+        checkComms(); //must run after update state
       }
+      //}
     }
 
 
