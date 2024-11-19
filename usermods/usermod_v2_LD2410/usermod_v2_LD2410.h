@@ -153,6 +153,8 @@ class LD2410 : public Usermod {
 
     uint16_t fullonDist = 30; //cm
     uint16_t fulloffDist = 400; //cm
+    float fadeTracking = 0.2;
+    float fadeIdle = 0.99;
     
     // These config variables have defaults set inside readFromConfig()
     /*int testInt;
@@ -196,6 +198,7 @@ class LD2410 : public Usermod {
 
   public:
     uint8_t getSer(){
+      yield();
       uint8_t dat = _serial.read();
       //DEBUG_PRINTF("Serial Data: %d \r\n", dat);
       return dat;
@@ -219,6 +222,7 @@ class LD2410 : public Usermod {
 
     bool getDataFrame(uint16_t dataLength){
         if(_serial.available() < dataLength) return false;
+        yield();
         if(_serial.readBytes(_buf, dataLength) != dataLength) return false;
         //DEBUG_PRINTF("data length: %d \r\n", dataLength);
         //printarr(_buf, dataLength);
@@ -267,6 +271,7 @@ class LD2410 : public Usermod {
     bool endConfigSet = false;
     bool getCMDresponse(uint16_t dataLength){
         if(_serial.available() < dataLength) return false;
+        yield();
         if(_serial.readBytes(_buf, dataLength) != dataLength) return false;
         //DEBUG_PRINTF("data length: %d \r\n", dataLength);
         //printarr(_buf, dataLength);
@@ -299,7 +304,7 @@ class LD2410 : public Usermod {
               break;
             }
             case READ_GATES_CONFIG: {
-                uint8_t bufi=2; //buffer index
+                //uint8_t bufi=2; //buffer index
                 commandResult = littleEndianToUINT16(_buf[_bufi++],_buf[_bufi++]); 
                 commandResult ? Serial.println("Failed to read gate config"): DEBUG_PRINTLN("Read gate config");
 
@@ -362,7 +367,7 @@ class LD2410 : public Usermod {
     }
 
     void updateState(){
-        if(_serial.available() > 0){
+      if(_serial.available() > 0){
         if(testBool6){DEBUG_PRINTF("State: %d \r\n",state);}
         switch(state){ //reading sensor configuration states
             case(ST_IDLE): {uint8_t data = getSer(); state = (data == 0xFD) ? ST_CMD1 : (data == 0xF4) ? ST_DATA1 : ST_IDLE; break;}
@@ -380,30 +385,57 @@ class LD2410 : public Usermod {
             case(ST_DATA2): state = (getSer() == 0xF2) ? ST_DATA3   : ST_IDLE; break;
             case(ST_DATA3): state = (getSer() == 0xF1) ? ST_D_LENGTH: ST_IDLE; break;
             case(ST_D_LENGTH): state = (readuint16_t(dataLength)) ? ST_GETDATA : ST_D_LENGTH; break;
-            case(ST_GETDATA):  getDataFrame(dataLength); state = ST_DATA4; break;
+            case(ST_GETDATA):  state = ST_DATA4; getDataFrame(dataLength); break;
             case(ST_DATA4): state = (getSer() == 0xF8) ? ST_DATA5   : ST_IDLE; break;
             case(ST_DATA5): state = (getSer() == 0xF7) ? ST_DATA6   : ST_IDLE; break;
             case(ST_DATA6): state = (getSer() == 0xF6) ? ST_DATA7   : ST_IDLE; break;
             case(ST_DATA7): state = (getSer() == 0xF5) ? ST_ENDDATAFRAME  : ST_IDLE; break;
-            case(ST_ENDDATAFRAME): 
-              state = ST_IDLE; 
-              if(testBool2) {DEBUG_PRINTF("sense: %03u, %03u, %03u, %03u \r\n", bri, data.movementDistance,data.stationaryDistance, data.detectionDistance);}
-              if(testBool3) {printarr(data.movementGateEnergies,MAX_GATES);}
-              if(testBool1){
-                uint16_t calcbri = data.movementDistance;
-                //uint16_t fullonDist = 30;
-                //uint16_t fulloffDist = 300;
-                if(calcbri < fullonDist) calcbri = fullonDist;
-                if(calcbri > fulloffDist) calcbri = fulloffDist;
-                calcbri = 255-(255*(calcbri-fullonDist)/(fulloffDist-fullonDist));
-                bri = calcbri;
-                stateUpdated(CALL_MODE_DIRECT_CHANGE);
-              }
-              break;
+            case(ST_ENDDATAFRAME): state = ST_IDLE; processData(); break;
             default: state = ST_IDLE; break;
         }
-        }
+      }
     }
+
+    void processData(){
+      //if(testBool2) {DEBUG_PRINTF("sense: %03u, %03u, %03u, %03u \r\n", bri, data.movementDistance,data.stationaryDistance, data.detectionDistance);}
+      if(testBool3) {printarr(data.movementGateEnergies,MAX_GATES);}
+      if(testBool1){
+        byte oldbri = bri;
+        byte calcbri = (data.targetMoving) ? movingTargetUpdate(data.movementDistance) : 
+                      (data.targetStationary)? oldbri :
+                      noTargetUpdate();
+        if(oldbri != calcbri){
+          bri = calcbri;
+          stateUpdated(CALL_MODE_DIRECT_CHANGE);
+          //DEBUG_PRINTF("set bri: %03u, %03u, %03u \r\n", calcbri, data.movementDistance);
+        }
+      }
+    }
+    byte movingTargetUpdate(uint16_t dist){
+      byte currentbri = bri;
+      //limit distance to region of interest
+      if(dist < fullonDist) dist = (int16_t)fullonDist;
+      if(dist > fulloffDist) dist = (int16_t)fulloffDist;
+
+      int16_t pdist = 25500-(25500*(dist-fullonDist)/(fulloffDist-fullonDist)); //25500 to 0 proportional distance between full on dist to full off dist
+      int16_t diff = pdist - (int16_t)currentbri*100; // target - current
+      int16_t frac = fadeTracking*(float)diff; //0 to 25500
+      
+      if(frac < 0 && frac > -100){ frac = -100;} //minimum of +-1
+      else if( frac > 0 && frac < 100){frac = 100;}
+      byte calcbri  = (byte)((int16_t)currentbri + frac/100);
+      if(testBool2) {DEBUG_PRINTF("calc bri: %03u, %03u, %05i, %05i, %05i, %03u \r\n", currentbri, dist, pdist, diff, frac, calcbri);}
+    
+      return calcbri;
+    }
+
+    void stationaryTargetUpdate(uint16_t dist){}
+
+    byte noTargetUpdate(){
+      byte oldbri = bri;
+      return (byte)floor(fadeIdle*(float)oldbri);
+    }
+
     unsigned long comTime = 0;
     unsigned long comTimeoutms = 3000;
     void setBaud(uint8_t _baud){
@@ -411,7 +443,7 @@ class LD2410 : public Usermod {
       _serial.end(); //clear buffer //watchdog wdt crashes on esp32-cam but not esp32s2 mini
       state = ST_IDLE; //reset data frame state machine
       //delay(2);
-      _serial.setRxBufferSize(1024);
+      //_serial.setRxBufferSize(1024);
       _serial.begin(baudTable[_baud-1],SERIAL_8N1,RXpin,TXpin); 
       _serial.setTimeout(0); //no wait for read
       
@@ -600,6 +632,7 @@ class LD2410 : public Usermod {
     void loop() {
       // if usermod is disabled or called during strip updating just exit
       // NOTE: on very long strips strip.isUpdating() may always return true so update accordingly
+      yield();
       if (!enabled || strip.isUpdating()) return;
 
       //if (millis() - lastTime > 10) { //limit to 10 sensor updates per second
@@ -737,6 +770,8 @@ class LD2410 : public Usermod {
       top["DataState"] = testBool6;
       top["fullOffDistance"] = fulloffDist;
       top["fullOnDistance"] = fullonDist;
+      top["fadeTracking"] = fadeTracking;
+      top["fadeIdle"] = fadeIdle;
     }
 
 
@@ -784,7 +819,11 @@ class LD2410 : public Usermod {
       configComplete &= getJsonValue(top["DataState"], testBool6);
       configComplete &= getJsonValue(top["fullOffDistance"], fulloffDist, 400);
       configComplete &= getJsonValue(top["fullOnDistance"], fullonDist, 30);
+      configComplete &= getJsonValue(top["fadeTracking"], fadeTracking, .2);
+      configComplete &= getJsonValue(top["fadeIdle"], fadeIdle, .99);
 
+      fadeTracking = (fadeTracking < 0) ? 0 : (fadeTracking > 1) ? 1 : fadeTracking; 
+      fadeIdle = (fadeIdle < 0) ? 0 : (fadeIdle > 1) ? 1 : fadeIdle; 
       fullonDist = (fullonDist < 0) ? 0 : (fullonDist > 550) ? 550 : fullonDist; 
       fulloffDist = (fulloffDist <= fullonDist) ? fullonDist+1 : (fulloffDist > 600) ? 600 : fulloffDist; 
 
