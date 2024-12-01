@@ -144,10 +144,10 @@ class LD2410 : public Usermod {
     unsigned int baudTable[NUM_BAUD_VALUES] = {9600u,19200u,38400u,57600u,115200u,230400u,256000u,460800u}; //allowable baud rates for ld2410
     bool pinsReady = false; // whether Serial pins are allocated by pin manager
 
-    bool testBool1 = true;
+    bool boolApplyBrightness = true;
     bool testBool2 = true;
     bool testBool3 = true;
-    bool testBool4 = true;
+    bool boolReadSerial = true;
     bool testBool5 = false;
     bool testBool6 = false;
     bool boolPrintSerial = false;
@@ -628,19 +628,19 @@ class LD2410 : public Usermod {
 
       if (millis() - lastTime > 100) { //limit brightness updates to 10 sensor updates per second
         lastTime = millis();
-        if(testBool1){
+        if(boolApplyBrightness){
           byte calcbri = (data.targetMoving) ? movingTargetUpdate(data.movementDistance) : 
                     (data.targetStationary)? bri :
                     noTargetUpdate();
           
           if(bri != calcbri){
             bri = calcbri;
-            stateUpdated(CALL_MODE_NO_NOTIFY);
+            stateUpdated(CALL_MODE_DIRECT_CHANGE);
           }
         }
       }
 
-      if(testBool4){
+      if(boolReadSerial){
         uint32_t dataNum = _serial.available();
 
         if(dataNum > 0){
@@ -765,10 +765,10 @@ class LD2410 : public Usermod {
       top["RXpin"] = RXpin;
       top["TXpin"] = TXpin;
       top["baud"] = baud;
-      top["test1"] = testBool1;
+      top["Apply Brightness"] = boolApplyBrightness;
       top["test2"] = testBool2;
       top["test3"] = testBool3;
-      top["test4"] = testBool4;
+      top["Read Serial"] = boolReadSerial;
       top["ComState"] = testBool5;
       top["DataState"] = testBool6;
       top["PrintSerial"] = boolPrintSerial;
@@ -815,10 +815,10 @@ class LD2410 : public Usermod {
       configComplete &= getJsonValue(top["RXpin"], RXpin, -1);
       configComplete &= getJsonValue(top["TXpin"], TXpin, -1);
       configComplete &= getJsonValue(top["baud"], baud, 7);
-      configComplete &= getJsonValue(top["test1"], testBool1);  
+      configComplete &= getJsonValue(top["Apply Brightness"], boolApplyBrightness);  
       configComplete &= getJsonValue(top["test2"], testBool2);  
       configComplete &= getJsonValue(top["test3"], testBool3);  
-      configComplete &= getJsonValue(top["test4"], testBool4);
+      configComplete &= getJsonValue(top["Read Serial"], boolReadSerial);
       configComplete &= getJsonValue(top["ComState"], testBool5);
       configComplete &= getJsonValue(top["DataState"], testBool6);
       configComplete &= getJsonValue(top["PrintSerial"], boolPrintSerial);
