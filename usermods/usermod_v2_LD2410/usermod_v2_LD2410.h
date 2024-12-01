@@ -150,6 +150,7 @@ class LD2410 : public Usermod {
     bool testBool4 = true;
     bool testBool5 = false;
     bool testBool6 = false;
+    bool boolPrintSerial = false;
 
     uint16_t fullonDist = 30; //cm
     uint16_t fulloffDist = 400; //cm
@@ -200,7 +201,7 @@ class LD2410 : public Usermod {
     uint8_t getSer(){
       yield();
       uint8_t dat = _serial.read();
-      //DEBUG_PRINTF("Serial Data: %d \r\n", dat);
+      if(boolPrintSerial) DEBUG_PRINTF("Serial Data: %X \r\n", dat);
       return dat;
     }
 
@@ -224,8 +225,10 @@ class LD2410 : public Usermod {
         if(_serial.available() < dataLength) return false;
         yield();
         if(_serial.readBytes(_buf, dataLength) != dataLength) return false;
-        //DEBUG_PRINTF("data length: %d \r\n", dataLength);
-        //printarr(_buf, dataLength);
+        if(boolPrintSerial){
+          DEBUG_PRINTF("data length: %d \r\n", dataLength);
+          printarr(_buf, dataLength);
+        }
         uint8_t _bufi = 0; //reset buffer index
 
         data.dataType = (LD2410DataType)_buf[_bufi++];
@@ -385,7 +388,7 @@ class LD2410 : public Usermod {
             case(ST_DATA2): state = (getSer() == 0xF2) ? ST_DATA3   : ST_IDLE; break;
             case(ST_DATA3): state = (getSer() == 0xF1) ? ST_D_LENGTH: ST_IDLE; break;
             case(ST_D_LENGTH): state = (readuint16_t(dataLength)) ? ST_GETDATA : ST_D_LENGTH; break;
-            case(ST_GETDATA):  state = ST_DATA4; getDataFrame(dataLength); break;
+            case(ST_GETDATA):  state = (getDataFrame(dataLength)) ? ST_DATA4: ST_GETDATA;  break;
             case(ST_DATA4): state = (getSer() == 0xF8) ? ST_DATA5   : ST_IDLE; break;
             case(ST_DATA5): state = (getSer() == 0xF7) ? ST_DATA6   : ST_IDLE; break;
             case(ST_DATA6): state = (getSer() == 0xF6) ? ST_DATA7   : ST_IDLE; break;
@@ -397,20 +400,9 @@ class LD2410 : public Usermod {
     }
 
     void processData(){
-      //if(testBool2) {DEBUG_PRINTF("sense: %03u, %03u, %03u, %03u \r\n", bri, data.movementDistance,data.stationaryDistance, data.detectionDistance);}
       if(testBool3) {printarr(data.movementGateEnergies,MAX_GATES);}
-      if(testBool1){
-        byte oldbri = bri;
-        byte calcbri = (data.targetMoving) ? movingTargetUpdate(data.movementDistance) : 
-                      (data.targetStationary)? oldbri :
-                      noTargetUpdate();
-        if(oldbri != calcbri){
-          bri = calcbri;
-          stateUpdated(CALL_MODE_DIRECT_CHANGE);
-          //DEBUG_PRINTF("set bri: %03u, %03u, %03u \r\n", calcbri, data.movementDistance);
-        }
-      }
     }
+
     byte movingTargetUpdate(uint16_t dist){
       byte currentbri = bri;
       //limit distance to region of interest
@@ -632,11 +624,22 @@ class LD2410 : public Usermod {
     void loop() {
       // if usermod is disabled or called during strip updating just exit
       // NOTE: on very long strips strip.isUpdating() may always return true so update accordingly
-      yield();
-      if (!enabled || strip.isUpdating()) return;
+      if (!enabled ) return;
 
-      //if (millis() - lastTime > 10) { //limit to 10 sensor updates per second
-      //  lastTime = millis();
+      if (millis() - lastTime > 100) { //limit brightness updates to 10 sensor updates per second
+        lastTime = millis();
+        if(testBool1){
+          byte calcbri = (data.targetMoving) ? movingTargetUpdate(data.movementDistance) : 
+                    (data.targetStationary)? bri :
+                    noTargetUpdate();
+          
+          if(bri != calcbri){
+            bri = calcbri;
+            stateUpdated(CALL_MODE_NO_NOTIFY);
+          }
+        }
+      }
+
       if(testBool4){
         uint32_t dataNum = _serial.available();
 
@@ -768,6 +771,7 @@ class LD2410 : public Usermod {
       top["test4"] = testBool4;
       top["ComState"] = testBool5;
       top["DataState"] = testBool6;
+      top["PrintSerial"] = boolPrintSerial;
       top["fullOffDistance"] = fulloffDist;
       top["fullOnDistance"] = fullonDist;
       top["fadeTracking"] = fadeTracking;
@@ -817,6 +821,7 @@ class LD2410 : public Usermod {
       configComplete &= getJsonValue(top["test4"], testBool4);
       configComplete &= getJsonValue(top["ComState"], testBool5);
       configComplete &= getJsonValue(top["DataState"], testBool6);
+      configComplete &= getJsonValue(top["PrintSerial"], boolPrintSerial);
       configComplete &= getJsonValue(top["fullOffDistance"], fulloffDist, 400);
       configComplete &= getJsonValue(top["fullOnDistance"], fullonDist, 30);
       configComplete &= getJsonValue(top["fadeTracking"], fadeTracking, .2);
